@@ -49,13 +49,17 @@ type RemoteCacheOptions struct {
 	Signature bool   `json:"signature,omitempty"`
 }
 
-type pipelineJSON struct {
-	Outputs    *[]string           `json:"outputs"`
+type rawTaskDefinition struct {
+	// We can't use omitempty for Outputs, because it will
+	// always unmarshal into an empty array, which means something different from nil.
+	Outputs *[]string `json:"outputs"`
+
 	Cache      *bool               `json:"cache,omitempty"`
 	DependsOn  []string            `json:"dependsOn,omitempty"`
 	Inputs     []string            `json:"inputs,omitempty"`
 	OutputMode util.TaskOutputMode `json:"outputMode,omitempty"`
 	Env        []string            `json:"env,omitempty"`
+	Persistent bool                `json:"persistent,omitempty"`
 }
 
 // Pipeline is a struct for deserializing .pipeline in configFile
@@ -70,6 +74,7 @@ type TaskDefinition struct {
 	TaskDependencies        []string
 	Inputs                  []string
 	OutputMode              util.TaskOutputMode
+	Persistent              bool
 }
 
 // LoadTurboConfig loads, or optionally, synthesizes a TurboJSON instance
@@ -207,19 +212,18 @@ func (pc Pipeline) HasTask(task string) bool {
 
 // UnmarshalJSON deserializes JSON into a TaskDefinition
 func (c *TaskDefinition) UnmarshalJSON(data []byte) error {
-	rawPipeline := &pipelineJSON{}
-	if err := json.Unmarshal(data, &rawPipeline); err != nil {
+	rawTaskDefinition := &rawTaskDefinition{}
+	if err := json.Unmarshal(data, &rawTaskDefinition); err != nil {
 		return err
 	}
 
 	// We actually need a nil value to be able to unmarshal the json
 	// because we interpret the omission of outputs to be different
-	// from an empty array. We can't use omitempty because it will
-	// always unmarshal into an empty array which is not what we want.
-	if rawPipeline.Outputs != nil {
+	// from an empty array.
+	if rawTaskDefinition.Outputs != nil {
 		var inclusions []string
 		var exclusions []string
-		for _, glob := range *rawPipeline.Outputs {
+		for _, glob := range *rawTaskDefinition.Outputs {
 			if strings.HasPrefix(glob, "!") {
 				exclusions = append(exclusions, glob[1:])
 			} else {
@@ -236,17 +240,17 @@ func (c *TaskDefinition) UnmarshalJSON(data []byte) error {
 	}
 	sort.Strings(c.Outputs.Inclusions)
 	sort.Strings(c.Outputs.Exclusions)
-	if rawPipeline.Cache == nil {
+	if rawTaskDefinition.Cache == nil {
 		c.ShouldCache = true
 	} else {
-		c.ShouldCache = *rawPipeline.Cache
+		c.ShouldCache = *rawTaskDefinition.Cache
 	}
 
 	envVarDependencies := make(util.Set)
 	c.TopologicalDependencies = []string{}
 	c.TaskDependencies = []string{}
 
-	for _, dependency := range rawPipeline.DependsOn {
+	for _, dependency := range rawTaskDefinition.DependsOn {
 		if strings.HasPrefix(dependency, envPipelineDelimiter) {
 			log.Printf("[DEPRECATED] Declaring an environment variable in \"dependsOn\" is deprecated, found %s. Use the \"env\" key or use `npx @turbo/codemod migrate-env-var-dependencies`.\n", dependency)
 			envVarDependencies.Add(strings.TrimPrefix(dependency, envPipelineDelimiter))
@@ -260,7 +264,7 @@ func (c *TaskDefinition) UnmarshalJSON(data []byte) error {
 	sort.Strings(c.TopologicalDependencies)
 
 	// Append env key into EnvVarDependencies
-	for _, value := range rawPipeline.Env {
+	for _, value := range rawTaskDefinition.Env {
 		if strings.HasPrefix(value, envPipelineDelimiter) {
 			// Hard error to help people specify this correctly during migration.
 			// TODO: Remove this error after we have run summary.
@@ -274,8 +278,9 @@ func (c *TaskDefinition) UnmarshalJSON(data []byte) error {
 	sort.Strings(c.EnvVarDependencies)
 	// Note that we don't require Inputs to be sorted, we're going to
 	// hash the resulting files and sort that instead
-	c.Inputs = rawPipeline.Inputs
-	c.OutputMode = rawPipeline.OutputMode
+	c.Inputs = rawTaskDefinition.Inputs
+	c.OutputMode = rawTaskDefinition.OutputMode
+	c.Persistent = rawTaskDefinition.Persistent
 	return nil
 }
 
