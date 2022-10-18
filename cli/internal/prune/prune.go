@@ -6,7 +6,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"github.com/vercel/turborepo/cli/internal/cache"
 	"github.com/vercel/turborepo/cli/internal/cmdutil"
 	"github.com/vercel/turborepo/cli/internal/context"
 	"github.com/vercel/turborepo/cli/internal/fs"
@@ -82,13 +81,12 @@ type prune struct {
 
 // Prune creates a smaller monorepo with only the required workspaces
 func (p *prune) prune(opts *opts) error {
-	cacheDir := cache.DefaultLocation(p.base.RepoRoot)
 	rootPackageJSONPath := p.base.RepoRoot.UntypedJoin("package.json")
 	rootPackageJSON, err := fs.ReadPackageJSON(rootPackageJSONPath)
 	if err != nil {
 		return fmt.Errorf("failed to read package.json: %w", err)
 	}
-	ctx, err := context.BuildPackageGraph(p.base.RepoRoot, rootPackageJSON, cacheDir)
+	ctx, err := context.BuildPackageGraph(p.base.RepoRoot, rootPackageJSON)
 	if err != nil {
 		return errors.Wrap(err, "could not construct graph")
 	}
@@ -116,6 +114,9 @@ func (p *prune) prune(opts *opts) error {
 	}
 	if !canPrune {
 		return errors.Errorf("this command is not yet implemented for %s", ctx.PackageManager.Name)
+	}
+	if ctx.Lockfile == nil {
+		return errors.New("Cannot prune without parsed lockfile")
 	}
 
 	p.base.UI.Output(fmt.Sprintf("Generating pruned monorepo for %v in %v", ui.Bold(opts.scope), ui.Bold(outDir.ToString())))
